@@ -20,6 +20,7 @@ abstract class JsonApiResource extends JsonResource
     use Concerns\Identification;
     use Concerns\Implementation;
     use Concerns\Links;
+    use Concerns\MergesDuplicateResources;
     use Concerns\Meta;
     use Concerns\RelationshipLinks;
     use Concerns\Relationships;
@@ -134,42 +135,23 @@ abstract class JsonApiResource extends JsonResource
 
     /**
      * @param  Request  $request
-     * @return array{included?: array<int, JsonApiResource>, jsonapi: ServerImplementation}
+     * @return array{included?: array<int, array{id: string, type: string, attributes?: stdClass, relationships?: stdClass, meta?: stdClass, links?: stdClass}>, jsonapi: ServerImplementation}
      */
     public function with($request)
     {
-        $included = $this->included($request)
-            ->uniqueStrict(fn (JsonApiResource $resource): array => $resource->uniqueKey($request))
-            ->values()
-            ->all();
+        $primaryKey = self::resourceKey($this, $request);
 
-        $with = [
-            ...$included ? ['included' => $included] : [],
+        $included = self::mergeDuplicateResources(
+            $this->included($request)
+                ->reject(fn (JsonApiResource $resource): bool => self::resourceKey($resource, $request) === $primaryKey),
+            $request,
+        );
+
+        return [
+            ...$included === [] ? [] : ['included' => $included],
             ...($implementation = self::toServerImplementation($request))
                 ? ['jsonapi' => $implementation] : [],
         ];
-
-        if (isset($with['included'])) {
-            $primaryKey = self::resourceKey($this, $request);
-
-            $included = Collection::make($with['included'])
-                ->reject(fn (JsonApiResource $resource): bool => self::resourceKey($resource, $request) === $primaryKey)
-                ->values()
-                ->all();
-
-            if ($included === []) {
-                unset($with['included']);
-            } else {
-                $with['included'] = $included;
-            }
-        }
-
-        return $with;
-    }
-
-    private static function resourceKey(JsonApiResource $resource, Request $request): string
-    {
-        return json_encode($resource->uniqueKey($request), JSON_THROW_ON_ERROR);
     }
 
     /**

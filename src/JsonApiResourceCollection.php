@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace TiMacDonald\JsonApi;
 
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Collection;
 
 class JsonApiResourceCollection extends AnonymousResourceCollection
 {
+    use Concerns\MergesDuplicateResources;
     use Concerns\RelationshipLinks;
 
     /**
@@ -47,47 +49,27 @@ class JsonApiResourceCollection extends AnonymousResourceCollection
      */
     public function with($request)
     {
-        $included = $this->collection
-            ->map(fn (JsonApiResource $resource): Collection => $resource->included($request))
-            ->flatten()
-            ->uniqueStrict(fn (JsonApiResource $resource): array => $resource->uniqueKey($request))
-            ->values()
-            ->all();
+        $primaryKeys = $this->collection
+            ->map(fn (JsonApiResource $resource): string => self::resourceKey($resource, $request))
+            ->flip();
 
-        $with = [
-            ...$included ? ['included' => $included] : [],
+        $included = self::mergeDuplicateResources(
+            $this->collection
+                ->flatMap(fn (JsonApiResource $resource): Collection => $resource->included($request))
+                ->reject(fn (JsonApiResource $resource): bool => $primaryKeys->has(self::resourceKey($resource, $request))),
+            $request,
+        );
+
+        return [
+            ...$included === [] ? [] : ['included' => $included],
             ...($implementation = $this->collects::toServerImplementation($request))
                 ? ['jsonapi' => $implementation] : [],
         ];
-
-        if (isset($with['included'])) {
-            $primaryKeys = $this->collection
-                ->map(fn (JsonApiResource $resource): string => self::resourceKey($resource, $request))
-                ->flip();
-
-            $included = Collection::make($with['included'])
-                ->reject(fn (JsonApiResource $resource): bool => $primaryKeys->has(self::resourceKey($resource, $request)))
-                ->values()
-                ->all();
-
-            if ($included === []) {
-                unset($with['included']);
-            } else {
-                $with['included'] = $included;
-            }
-        }
-
-        return $with;
-    }
-
-    private static function resourceKey(JsonApiResource $resource, Request $request): string
-    {
-        return json_encode($resource->uniqueKey($request), JSON_THROW_ON_ERROR);
     }
 
     /**
      * @param  Request  $request
-     * @return \Illuminate\Http\JsonResponse
+     * @return JsonResponse
      */
     public function toResponse($request)
     {
