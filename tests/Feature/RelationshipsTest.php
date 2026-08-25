@@ -1491,4 +1491,232 @@ class RelationshipsTest extends TestCase
         ]);
         $this->assertValidJsonApi($response);
     }
+
+    public function test_it_merges_relationships_when_a_resource_is_included_through_multiple_paths_for_a_single_resource(): void
+    {
+        $post = new BasicModel([
+            'id' => 'post-id',
+            'title' => 'post-title',
+            'content' => 'post-content',
+        ]);
+        $post->author = new BasicModel([
+            'id' => 'author-id',
+            'name' => 'author-name',
+        ]);
+        $post->feature_image = new BasicModel([
+            'id' => 'image-id',
+            'url' => 'https://example.com/image.png',
+        ]);
+        $user = new BasicModel([
+            'id' => 'user-id',
+            'name' => 'user-name',
+        ]);
+        Route::get('test-route', fn () => new class($user, $post) extends JsonApiResource
+        {
+            public function __construct(
+                BasicModel $resource,
+                private BasicModel $post,
+            ) {
+                parent::__construct($resource);
+            }
+
+            public function toAttributes($request): array
+            {
+                return [
+                    'name' => $this->name,
+                ];
+            }
+
+            public function toRelationships($request): array
+            {
+                return [
+                    'featuredPost' => fn () => PostResource::make($this->post),
+                    'latestPost' => fn () => PostResource::make($this->post),
+                ];
+            }
+        });
+
+        $response = $this->getJson('test-route?include=featuredPost,featuredPost.author,latestPost,latestPost.featureImage');
+
+        $response->assertOk();
+        $response->assertExactJson([
+            'data' => [
+                'id' => 'user-id',
+                'type' => 'basicModels',
+                'attributes' => [
+                    'name' => 'user-name',
+                ],
+                'relationships' => [
+                    'featuredPost' => [
+                        'data' => [
+                            'id' => 'post-id',
+                            'type' => 'basicModels',
+                        ],
+                    ],
+                    'latestPost' => [
+                        'data' => [
+                            'id' => 'post-id',
+                            'type' => 'basicModels',
+                        ],
+                    ],
+                ],
+            ],
+            'included' => [
+                [
+                    'id' => 'post-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'title' => 'post-title',
+                        'content' => 'post-content',
+                    ],
+                    'relationships' => [
+                        'author' => [
+                            'data' => [
+                                'id' => 'author-id',
+                                'type' => 'basicModels',
+                            ],
+                        ],
+                        'featureImage' => [
+                            'data' => [
+                                'id' => 'image-id',
+                                'type' => 'basicModels',
+                            ],
+                        ],
+                    ],
+                ],
+                [
+                    'id' => 'author-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'name' => 'author-name',
+                    ],
+                ],
+                [
+                    'id' => 'image-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'url' => 'https://example.com/image.png',
+                    ],
+                ],
+            ],
+        ]);
+        $this->assertValidJsonApi($response);
+    }
+
+    public function test_it_merges_relationships_when_a_resource_is_included_through_multiple_paths_for_a_collection_of_resources(): void
+    {
+        $post = new BasicModel([
+            'id' => 'post-id',
+            'title' => 'post-title',
+            'content' => 'post-content',
+        ]);
+        $post->author = new BasicModel([
+            'id' => 'author-id',
+            'name' => 'author-name',
+        ]);
+        $post->feature_image = new BasicModel([
+            'id' => 'image-id',
+            'url' => 'https://example.com/image.png',
+        ]);
+        $post->comments = Collection::make([
+            new BasicModel([
+                'id' => 'comment-id',
+                'content' => 'comment-content',
+            ]),
+        ]);
+        $post->comments[0]->post = $post;
+        $user = new BasicModel([
+            'id' => 'user-id',
+            'name' => 'user-name',
+        ]);
+        $user->posts = Collection::make([$post]);
+        Route::get('test-route', fn () => UserResource::collection([$user]));
+
+        $response = $this->getJson('test-route?include=posts,posts.featureImage,posts.comments,posts.comments.post,posts.comments.post.author');
+
+        $response->assertOk();
+        $response->assertExactJson([
+            'data' => [
+                [
+                    'id' => 'user-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'name' => 'user-name',
+                    ],
+                    'relationships' => [
+                        'posts' => [
+                            'data' => [
+                                [
+                                    'id' => 'post-id',
+                                    'type' => 'basicModels',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'included' => [
+                [
+                    'id' => 'post-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'title' => 'post-title',
+                        'content' => 'post-content',
+                    ],
+                    'relationships' => [
+                        'featureImage' => [
+                            'data' => [
+                                'id' => 'image-id',
+                                'type' => 'basicModels',
+                            ],
+                        ],
+                        'comments' => [
+                            'data' => [
+                                [
+                                    'id' => 'comment-id',
+                                    'type' => 'basicModels',
+                                ],
+                            ],
+                        ],
+                        'author' => [
+                            'data' => [
+                                'id' => 'author-id',
+                                'type' => 'basicModels',
+                            ],
+                        ],
+                    ],
+                ],
+                [
+                    'id' => 'image-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'url' => 'https://example.com/image.png',
+                    ],
+                ],
+                [
+                    'id' => 'comment-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'content' => 'comment-content',
+                    ],
+                    'relationships' => [
+                        'post' => [
+                            'data' => [
+                                'id' => 'post-id',
+                                'type' => 'basicModels',
+                            ],
+                        ],
+                    ],
+                ],
+                [
+                    'id' => 'author-id',
+                    'type' => 'basicModels',
+                    'attributes' => [
+                        'name' => 'author-name',
+                    ],
+                ],
+            ],
+        ]);
+        $this->assertValidJsonApi($response);
+    }
 }
